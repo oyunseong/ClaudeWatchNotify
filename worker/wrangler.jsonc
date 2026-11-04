@@ -4,6 +4,6 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   // npx wrangler kv namespace create TOKENS 로 만든 id를 넣는다
-  "kv_namespaces": [{ "binding": "TOKENS", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }]
+  "kv_namespaces": [{ "binding": "TOKENS", "id": "4d8a99c35dd4404999cca68a61c4bcbe" }]
   // Secret (npx wrangler secret put <이름>): FCM_SERVICE_ACCOUNT, NOTIFY_SECRET, REGISTER_SECRET
 }

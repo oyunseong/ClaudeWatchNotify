@@ -15,7 +15,7 @@
 **1차 범위**
 - 맥 훅 스크립트 (bash + jq + curl)
 - Cloudflare Worker 중계 서버 (TypeScript)
-- Wear OS 단독 앱: FCM 수신, 채널별 진동, 알림 표시, 최근 기록, 토큰 등록 상태 화면
+- Wear OS 단독 앱: FCM 수신, 이벤트별 진동(방해 금지 중에도), 알림 표시, 최근 기록, 토큰 등록 상태 화면
 
 **범위 밖 (2차 이후)**: 13절 참고
 
@@ -48,7 +48,8 @@
 ┌──────────────── 갤럭시 워치 (Wear OS 3+) ───────────────┐
 │ ClaudeMessagingService.onMessageReceived                │
 │   ├─ Room에 기록 저장 (최대 10건, 3일 보관)                │
-│   └─ 알림 표시 (채널별 진동, 세션별 1개, 그룹)              │
+│   ├─ 알림 표시 (조용한 채널, 세션별 1개, 그룹)              │
+│   └─ 진동 직접 재생 (Vibrator, usage=ALARM)               │
 │ onNewToken / 앱 실행 → POST /register                    │
 │ MainActivity: 등록 상태 카드 + 최근 기록 목록               │
 └─────────────────────────────────────────────────────────┘
@@ -63,7 +64,7 @@
 | 맥 훅 스크립트 | `hooks/watch-notify.sh` | 훅 입력 파싱, 경과 시간 계산, 짧은 응답 거르기, 워커 호출, 실패 로그 | 재시도, FCM 직접 호출, 비밀 키 보관(NOTIFY_SECRET 제외) |
 | 설치 스크립트 | `hooks/install.sh` | 스크립트 복사, 설정 파일 템플릿 생성, `~/.claude/settings.json`에 훅 등록/해제 | 워커 배포 |
 | Worker | `worker/` | 인증, 페이로드 검증, OAuth 토큰 발급·캐시, FCM 전송, 무효 토큰 삭제 | 메시지 내용 저장, 재시도 |
-| Wear 앱 | `wear/` | 토큰 등록, 메시지 수신, 기록 저장·정리, 알림·진동, 상태 화면 | 진동 직접 제어(`Vibrator` 사용 금지) |
+| Wear 앱 | `wear/` | 토큰 등록, 메시지 수신, 기록 저장·정리, 알림 표시, 진동 재생, 상태 화면 | 알림 채널로 진동 울리기 (8.3 참고) |
 
 ---
 
@@ -94,11 +95,11 @@ Claude Code        watch-notify.sh             Worker            FCM        Wear
  │                   │── POST /notify (bg) ────▶│ OAuth(캐시)      │            │
  │                   │                          │── send ────────▶│── data ───▶│
  │                   │                          │                 │            │ Room 저장 + 정리
- │                   │                          │                 │            │ 알림(claude_done)
+ │                   │                          │                 │            │ 알림(조용히) + 진동(ALARM)
 ```
 
 ### 4.3 입력 대기 (Notification)
-Stop과 같지만 경과 시간을 확인하지 않고 항상 보낸다. `message`에 Claude Code가 준 안내 문구가 들어가고, 채널은 `claude_attention`을 쓴다.
+Stop과 같지만 경과 시간을 확인하지 않고 항상 보낸다. `message`에 Claude Code가 준 안내 문구가 들어가고, 채널은 `claude_attention_silent`, 진동은 길게 한 번이다.
 
 ---
 
@@ -245,7 +246,8 @@ com.yunseong.claudewatch
 │  └─ RecordRepository.kt       저장 + 보관 정책 적용
 ├─ notify/
 │  ├─ ClaudeEvent.kt            FCM data → 모델 변환
-│  ├─ Channels.kt               채널 ID, 진동 패턴
+│  ├─ Channels.kt               조용한 알림 채널, 이전 채널 정리
+│  ├─ Haptics.kt                이벤트별 진동 패턴 재생 (usage=ALARM)
 │  ├─ NotificationPoster.kt     알림 생성, 그룹 요약
 │  └─ ClaudeMessagingService.kt FirebaseMessagingService
 ├─ register/
@@ -258,13 +260,26 @@ com.yunseong.claudewatch
 
 ### 8.3 알림 채널과 진동
 
-| 채널 ID | 이벤트 | 패턴(ms) | 중요도 |
-|---|---|---|---|
-| `claude_done` | Stop | `0, 150, 100, 150` (짧게 두 번) | HIGH |
-| `claude_attention` | Notification | `0, 600` (길게 한 번) | HIGH |
+**알림은 조용히 띄우고, 진동은 앱이 `Vibrator`로 직접 울린다.**
 
-- 진동은 **채널로만** 울린다. `Vibrator`를 직접 쓰면 방해 금지와 취침 모드를 무시하기 때문이다.
-- 채널의 진동 패턴은 채널을 처음 만들 때 고정된다. 패턴을 바꾸려면 **새 채널 ID**(예: `claude_done_v2`)를 만들고 이전 채널을 지운다.
+| 이벤트 | 채널 ID (소리·진동 없음) | 진동 패턴(ms) |
+|---|---|---|
+| Stop | `claude_done_silent` | `0, 150, 100, 150` (짧게 두 번) |
+| Notification | `claude_attention_silent` | `0, 600` (길게 한 번) |
+
+- 진동 usage는 **ALARM**이다. 방해 금지와 무음 모드에서도 울리고, 백그라운드 앱에서도 허용되는 usage이기 때문이다. 대가로 **취침 모드에서도 울린다.**
+- 사용자는 워치의 방해 금지를 **항상 켜 둔다.** 그래서 방해 금지를 따르는 방식으로는 진동을 받을 수 없다.
+
+**채널 진동을 쓰지 않는 이유** (갤럭시 워치7 SM-R930, Wear OS API 36에서 확인)
+- 처음에는 채널 진동으로 방해 금지를 따르게 설계했다. 하지만 갤럭시 워치는 알림 진동을 **삼성 시스템 UI**(`com.samsung.android.wearable.sysui`)가 대신 울린다.
+- 삼성 UI는 채널의 **진동 패턴을 무시**하고(모든 알림이 약 420ms 기본 진동), 방해 금지 중에는 채널의 **bypassDnd 설정도 무시**한다.
+- 방해 금지 접근 권한을 받아 bypassDnd 채널을 만들어 봤지만 울리지 않았다. 게다가 워치에는 이 권한을 켜는 설정 화면이 없다.
+- 확인 방법: `adb shell dumpsys vibrator_manager`의 진동 기록에서 `usage`와 패키지 이름을 본다.
+
+**채널 규칙**
+- 채널 설정은 만든 뒤 앱이 바꿀 수 없다. 바꾸려면 **새 채널 ID**를 만들고, 이전 ID를 `Channels.OBSOLETE`에 넣어 지운다.
+- 지금 `OBSOLETE`에 들어 있는 ID: `claude_done`, `claude_attention`, `claude_done_dnd`, `claude_attention_dnd`
+- 진동 패턴은 채널이 아니라 `Haptics.kt`에 있으므로, 패턴을 바꿀 때 채널 ID는 그대로 둔다.
 - 알림 `tag` = `session`, `id` = 1. 같은 세션의 새 알림은 이전 알림을 대체한다.
 - 모든 알림은 그룹 `claude`로 묶고, 그룹 요약 알림(id 0)을 같이 올린다.
 - 제목은 `project`, 본문은 `message`(Stop이면 `작업 완료 · 2분 4초`처럼 경과 시간을 붙임), 탭하면 `MainActivity`를 연다. `autoCancel`을 켠다.
@@ -401,7 +416,7 @@ echo '{"hook_event_name":"Notification","session_id":"test0000","cwd":"/tmp/demo
 | 워치 토큰 만료 | FCM이 UNREGISTERED를 돌려주면 Worker가 토큰을 삭제. 워치는 `onNewToken`이나 앱을 열 때 다시 등록 |
 | 워치가 꺼져 있음 | FCM이 TTL 10분 동안 보관했다가 전달. 그 뒤에는 버림 |
 | 워치 앱 강제 종료 | 앱을 다시 열기 전까지 FCM 메시지를 받지 못함(안드로이드 정책) |
-| 방해 금지 / 취침 모드 | 채널 정책에 따라 진동이 울리지 않음. 기록은 저장됨 |
+| 방해 금지 / 취침 모드 | 진동은 울린다(usage=ALARM). 알림 팝업은 워치 설정에 따라 안 뜰 수 있지만 알림 목록과 기록에는 남음 |
 | 짧은 응답 | Stop이면서 경과 시간이 `MIN_SECONDS` 미만이면 보내지 않음 |
 
 **알려진 제약**
@@ -426,7 +441,7 @@ echo '{"hook_event_name":"Notification","session_id":"test0000","cwd":"/tmp/demo
 | 로컬 토큰 캐시 대신 Cloudflare Worker 중계 | 서비스 계정 키를 맥에 두지 않고, 맥 쪽 의존성을 curl 하나로 줄이기 위해 |
 | 파이썬 없이 bash + jq + curl | 훅이 매번 실행되므로 시작 비용을 줄이고, jq는 이미 설치돼 있음 |
 | 짧은 응답 판정에 UserPromptSubmit 기록 사용 | Stop 훅 입력에 소요 시간이 없음 |
-| `Vibrator` 대신 알림 채널 진동 | 방해 금지와 취침 모드를 존중하고, 채널별로 끌 수 있게 하기 위해 |
+| ~~`Vibrator` 대신 알림 채널 진동~~ → **`Vibrator` 직접 사용 (usage=ALARM)** | 방해 금지를 항상 켜 두는 환경이고, 갤럭시 워치는 채널 진동 패턴과 bypassDnd를 무시함 (8.3). 2026-11-04 실기기 테스트 후 변경 |
 | data 메시지만 사용 | 앱이 백그라운드일 때도 `onMessageReceived`가 호출되도록 |
 | 기록 10건, 3일 보관 | 워치에서 최근 상황만 보면 됨 |
 | 토큰 자동 등록 | FCM 토큰이 바뀌어도 알림이 끊기지 않게 |

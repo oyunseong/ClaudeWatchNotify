@@ -21,6 +21,8 @@ class ClaudeMessagingService : FirebaseMessagingService() {
         }
         runBlocking { RecordRepository(applicationContext).save(event) }
         NotificationPoster.post(applicationContext, event)
+        // 채널은 조용하다. 진동은 여기서 직접 울린다 (docs/DESIGN.md 8.3)
+        Haptics.play(applicationContext, event.type)
     }
 
     // firebase-messaging 26.0.1에서 deprecated지만 공개 API에 대체 메서드가 없다
