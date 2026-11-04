@@ -1,0 +1,35 @@
+package com.yunseong.claudewatch.notify
+
+import android.util.Log
+import com.google.firebase.messaging.FirebaseMessagingService
+import com.google.firebase.messaging.RemoteMessage
+import com.yunseong.claudewatch.data.RecordRepository
+import com.yunseong.claudewatch.register.TokenRegistrar
+import kotlinx.coroutines.runBlocking
+
+/**
+ * 두 콜백 모두 FCM이 만든 백그라운드 스레드에서 실행되므로 blocking 호출을 써도 된다.
+ * data 메시지만 받는다. notification 필드가 오면 시스템이 대신 처리해 여기로 오지 않는다.
+ */
+class ClaudeMessagingService : FirebaseMessagingService() {
+
+    override fun onMessageReceived(message: RemoteMessage) {
+        val event = ClaudeEvent.from(message.data)
+        if (event == null) {
+            Log.w(TAG, "알 수 없는 메시지 무시: ${message.data.keys}")
+            return
+        }
+        runBlocking { RecordRepository(applicationContext).save(event) }
+        NotificationPoster.post(applicationContext, event)
+    }
+
+    // firebase-messaging 26.0.1에서 deprecated지만 공개 API에 대체 메서드가 없다
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onNewToken(token: String) {
+        runBlocking { TokenRegistrar.get(applicationContext).register(token) }
+    }
+
+    private companion object {
+        const val TAG = "ClaudeMessaging"
+    }
+}

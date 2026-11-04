@@ -1,0 +1,4 @@
+# 로컬 wrangler dev 용. .dev.vars 로 복사해서 쓴다 (git 제외)
+NOTIFY_SECRET=dev-notify-secret
+REGISTER_SECRET=dev-register-secret
+FCM_SERVICE_ACCOUNT={"project_id":"...","client_email":"...","private_key":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n","token_uri":"https://oauth2.googleapis.com/token"}

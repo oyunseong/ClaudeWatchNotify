@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Claude Watch</string>
+    <string name="channel_done_name">작업 완료</string>
+    <string name="channel_done_desc">Claude 작업이 끝났을 때 짧게 두 번 진동</string>
+    <string name="channel_attention_name">입력 대기</string>
+    <string name="channel_attention_desc">권한 승인이나 입력을 기다릴 때 길게 한 번 진동</string>
+</resources>

@@ -1,0 +1,58 @@
+# ===== 비밀값: 절대 커밋하지 않는다 (docs/DESIGN.md 9절) =====
+local.properties
+google-services.json
+# Firebase 서비스 계정 키 (콘솔에서 받으면 <프로젝트>-firebase-adminsdk-xxxx.json 이름이 붙는다)
+*-firebase-adminsdk-*.json
+*service-account*.json
+hooks/config
+.env
+.env.*
+worker/.dev.vars
+worker/.dev.vars.*
+!worker/.dev.vars.example
+
+# 서명 키
+*.jks
+*.keystore
+*.p12
+*.pem
+
+# ===== Gradle / Kotlin =====
+.gradle/
+.kotlin/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# ===== Android 빌드 산출물 =====
+*.apk
+*.aab
+*.ap_
+*.dex
+/captures/
+.externalNativeBuild/
+.cxx/
+*.hprof
+wear/release/
+# R8 매핑 파일은 출시 기록용으로 따로 보관한다
+mapping.txt
+
+# ===== IDE =====
+.idea/
+*.iml
+.vscode/
+.fleet/
+
+# ===== Node / Cloudflare Worker =====
+node_modules/
+.wrangler/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.tsbuildinfo
+
+# ===== OS / 기타 =====
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+*~

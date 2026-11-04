@@ -1,0 +1,8 @@
+# 기본은 LF로 통일
+* text=auto eol=lf
+# Windows 배치 파일은 CRLF 유지
+*.bat text eol=crlf
+# 바이너리
+*.jar binary
+*.png binary
+*.webp binary
