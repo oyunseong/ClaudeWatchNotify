@@ -16,7 +16,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /** FCM 토큰을 Worker의 POST /register 로 알린다. (docs/DESIGN.md 4.1, 8.5) */
-class TokenRegistrar private constructor(context: Context) {
+class TokenRegistrar private constructor(private val appContext: Context) {
 
     data class Status(
         val registeredToken: String? = null,
@@ -27,12 +27,12 @@ class TokenRegistrar private constructor(context: Context) {
         val isRegistered: Boolean get() = registeredToken != null && lastError == null
     }
 
-    private val prefs = context.getSharedPreferences("registration", Context.MODE_PRIVATE)
+    private val prefs = appContext.getSharedPreferences("registration", Context.MODE_PRIVATE)
     private val _status = MutableStateFlow(load())
     val status: StateFlow<Status> = _status.asStateFlow()
 
     /** 앱을 열 때 호출. 토큰이 바뀌었거나 지난번에 실패했으면 다시 등록한다 */
-    suspend fun ensureRegistered(force: Boolean = false) {
+    suspend fun ensureRegistered(force: Boolean = false, scheduleRetry: Boolean = true) {
         val token = try {
             // firebase-messaging 26.0.1에서 deprecated지만 공개 API에 대체 메서드가 없다
             @Suppress("DEPRECATION")
@@ -40,19 +40,22 @@ class TokenRegistrar private constructor(context: Context) {
         } catch (e: Exception) {
             // google-services.json 없이 빌드했거나 Play 서비스가 없는 경우
             update(_status.value.copy(lastError = "FCM 토큰 없음: ${e.message}", inProgress = false))
+            if (scheduleRetry) RegisterRetryWorker.schedule(appContext)
             return
         }
         val current = _status.value
-        if (force || current.registeredToken != token || current.lastError != null) register(token)
+        if (force || current.registeredToken != token || current.lastError != null) register(token, scheduleRetry)
     }
 
-    suspend fun register(token: String) {
+    suspend fun register(token: String, scheduleRetry: Boolean = true) {
         update(_status.value.copy(inProgress = true))
         val error = withContext(Dispatchers.IO) { post(token) }
         update(
             if (error == null) Status(registeredToken = token, registeredAt = System.currentTimeMillis())
             else _status.value.copy(lastError = error, inProgress = false)
         )
+        // 네트워크가 없을 때 실패하면 연결되는 대로 다시 시도한다 (docs/DESIGN.md 8.5)
+        if (error != null && scheduleRetry) RegisterRetryWorker.schedule(appContext)
     }
 
     /** 성공하면 null, 실패하면 오류 문구 */

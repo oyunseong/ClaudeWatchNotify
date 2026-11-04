@@ -6,8 +6,8 @@ import kotlinx.coroutines.flow.Flow
 import java.util.concurrent.TimeUnit
 
 /** 기록 저장과 보관 정책 (docs/DESIGN.md 8.4): 최대 10건, 3일 보관 */
-class RecordRepository(context: Context) {
-    private val dao = AppDatabase.get(context).recordDao()
+class RecordRepository(private val dao: RecordDao) {
+    constructor(context: Context) : this(AppDatabase.get(context).recordDao())
 
     fun observe(): Flow<List<NotificationRecord>> = dao.observeLatest(MAX_RECORDS)
 

@@ -3,8 +3,10 @@ package com.yunseong.claudewatch.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.yunseong.claudewatch.BuildConfig
 import com.yunseong.claudewatch.data.NotificationRecord
 import com.yunseong.claudewatch.data.RecordRepository
+import com.yunseong.claudewatch.dev.WirelessDebugging
 import com.yunseong.claudewatch.register.TokenRegistrar
 import com.yunseong.claudewatch.settings.VibrationSettings
 import kotlinx.coroutines.flow.SharingStarted
@@ -16,6 +18,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     private val repository = RecordRepository(app)
     private val registrar = TokenRegistrar.get(app)
     private val vibrationSettings = VibrationSettings.get(app)
+    private val wirelessDebugging = WirelessDebugging.get(app)
 
     val records: StateFlow<List<NotificationRecord>> =
         repository.observe().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -25,6 +28,9 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     /** 진동 기준 시간(초) (docs/DESIGN.md 8.7) */
     val minSeconds: StateFlow<Long> = vibrationSettings.minSeconds
 
+    /** debug 빌드 전용 (docs/DESIGN.md 8.8) */
+    val wirelessDebuggingState: StateFlow<WirelessDebugging.State> = wirelessDebugging.state
+
     /** 앱을 열 때: 보관 정책 적용 + 필요하면 토큰 재등록 (docs/DESIGN.md 8.4, 8.5) */
     fun onOpen() {
         viewModelScope.launch { repository.prune() }
@@ -32,6 +38,18 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun cycleMinSeconds() = vibrationSettings.cycle()
+
+    fun onVisible() {
+        if (BuildConfig.DEBUG) wirelessDebugging.onVisible()
+    }
+
+    fun onHidden() {
+        if (BuildConfig.DEBUG) wirelessDebugging.onHidden()
+    }
+
+    fun toggleWirelessDebugging() {
+        if (BuildConfig.DEBUG) wirelessDebugging.toggle()
+    }
 
     fun reRegister() {
         viewModelScope.launch { registrar.ensureRegistered(force = true) }

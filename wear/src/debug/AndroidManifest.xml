@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- debug 빌드 전용 권한. 무선 디버깅 토글에 쓴다 (docs/DESIGN.md 8.8) -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- 일반 앱은 받을 수 없다. 한 번만 허용:
+         adb shell pm grant com.yunseong.claudewatch android.permission.WRITE_SECURE_SETTINGS -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- Wi-Fi 네트워크 요청 (워치가 블루투스 연결 중에도 Wi-Fi를 켜 두게) -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+</manifest>

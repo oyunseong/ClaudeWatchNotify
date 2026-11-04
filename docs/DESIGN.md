@@ -2,6 +2,7 @@
 
 맥북에서 돌아가는 Claude Code 세션이 작업을 마치거나 사용자 입력을 기다릴 때, 갤럭시 워치로 진동 알림을 보내는 시스템이다.
 이 문서는 구현할 때 컨텍스트로 넣는 기준 문서다. 결정을 바꾸면 이 문서부터 고친다.
+배포, 세팅, 테스트, 장애 대응 같은 운영 절차는 [OPERATIONS.md](OPERATIONS.md)에 있다.
 
 ---
 
@@ -230,7 +231,7 @@ MIN_SECONDS=0   # 진동 기준은 워치 앱에서 정한다 (8.7). 0이 아니
 - PhoneMonitor와 같은 컨벤션: 버전 카탈로그, AGP 9.3(내장 Kotlin), Kotlin 2.4, Java 17
 - minSdk 30 (Wear OS 3, 갤럭시 워치4 이상), compileSdk 37, targetSdk 36
 - UI: Compose for Wear OS Material3 (`androidx.wear.compose:compose-material3`)
-- 의존성: Firebase Messaging(BOM), Room(KSP), kotlinx-coroutines-play-services, lifecycle
+- 의존성: Firebase Messaging(BOM), Room(KSP), WorkManager, kotlinx-coroutines-play-services, lifecycle, fragment(1.9.1 고정: play-services가 끌어오는 1.1.0은 release lint를 막음)
 - 단독 앱: `com.google.android.wearable.standalone = true`. 폰 앱 없음
 - `BuildConfig.WORKER_URL`, `BuildConfig.REGISTER_SECRET`은 `local.properties`의 `claudewatch.workerUrl`, `claudewatch.registerSecret`에서 읽는다
 - `wear/google-services.json`이 있을 때만 google-services 플러그인을 적용한다. 없으면 빌드는 되지만 FCM이 동작하지 않는다
@@ -254,12 +255,18 @@ com.yunseong.claudewatch
 │  ├─ NotificationPoster.kt     알림 생성, 그룹 요약
 │  └─ ClaudeMessagingService.kt FirebaseMessagingService
 ├─ register/
-│  └─ TokenRegistrar.kt         /register 호출, 등록 상태 보관
+│  ├─ TokenRegistrar.kt         /register 호출, 등록 상태 보관
+│  └─ RegisterRetryWorker.kt    등록 실패 시 네트워크 연결되면 재시도
+├─ dev/
+│  └─ WirelessDebugging.kt      무선 디버깅 토글 (debug 전용, 8.8)
 └─ ui/
    ├─ MainActivity.kt
    ├─ HomeViewModel.kt
-   └─ HomeScreen.kt
+   ├─ HomeScreen.kt
+   └─ Theme.kt                  색 팔레트
 ```
+
+테스트: `src/test/.../LogicTest.kt`(JVM, 순수 로직), `src/androidTest/.../RecordRepositoryTest.kt`(워치, 보관 정책)
 
 ### 8.3 알림 채널과 진동
 
@@ -297,25 +304,47 @@ com.yunseong.claudewatch
 ### 8.5 토큰 등록
 - `onNewToken`에서 바로 `/register`를 호출한다(서비스 스레드에서 blocking).
 - 앱을 열 때 `FirebaseMessaging.token`을 가져와서, 저장된 등록 토큰과 다르거나 마지막 등록이 실패했으면 다시 등록한다.
-- 상태(`registeredToken`, `registeredAt`, `lastError`)는 SharedPreferences에 두고, `StateFlow`로 화면에 보여 준다.
-- HTTP는 `HttpURLConnection`, JSON은 `org.json`을 쓴다. 라이브러리를 추가하지 않는다.
+- **등록이 실패하면 `RegisterRetryWorker`(WorkManager)를 예약한다.** 네트워크가 연결되면 실행되고, 30초부터 지수 백오프로 최대 8번 다시 시도한다. 설치 직후처럼 워치가 잠깐 오프라인일 때 앱을 다시 열 때까지 등록이 안 되던 문제를 막는다.
+- 상태(`registeredToken`, `registeredAt`, `lastError`)는 SharedPreferences `registration`에 두고, `StateFlow`로 화면에 보여 준다.
+- HTTP는 `HttpURLConnection`, JSON은 `org.json`을 쓴다.
 
 ### 8.6 화면 (`MainActivity` 하나)
 
+Wear Compose Material3 기반. `TransformingLazyColumn`에 `SurfaceTransformation`을 적용해 화면 가장자리에서 항목이 자연스럽게 줄어든다. 색은 `ui/Theme.kt`의 다크 팔레트(코랄 = 완료, 앰버 = 입력 대기, 배경 순수 검정)를 쓴다.
+
 ```
-┌──────────────┐
-│   Claude     │  ListHeader
-│ ┌──────────┐ │
-│ │ 등록됨 ✓  │ │  상태 카드: 등록 여부, 토큰 끝 6자리, 등록 시각
-│ │ …a1b2c3   │ │  탭하면 다시 등록
-│ └──────────┘ │
-│ keystore     │  기록 카드 (최신순, 최대 10건)
-│ 작업 완료 2분 │  제목 project, 본문 message, 시간 상대 표기
-│ PhoneMonitor │  권한 대기는 다른 아이콘 또는 색으로 표시
-│ 권한 승인 대기 │
-└──────────────┘
+        6:51                 TimeText (AppScaffold 기본)
+     ✦ Claude                헤더
+┌───────────────────────┐
+│ ☁✓ 알림 수신 중          │  연결 버튼: 등록 상태, 토큰 끝 4자리, 등록 시각
+│    …hBTM · 방금         │  탭하면 다시 등록. 실패하면 빨간 배경 + 오류 문구
+└───────────────────────┘
+┌───────────────────────┐
+│ 📳 진동 기준             │  탭할 때마다 기준 변경 (8.7)
+│    모든 작업             │
+└───────────────────────┘
+  최근 알림 4                소제목 (기록 개수)
+┌───────────────────────┐
+│ ⏳ keystore      1분 전 │  입력 대기: 앰버 카드
+│ Claude needs your …    │
+└───────────────────────┘
+┌───────────────────────┐
+│ ✓ PhoneMonitor  1분 전 │  완료: 기본 카드 + "5분 12초 걸림"
+│ 작업 완료               │
+│ 5분 12초 걸림           │
+└───────────────────────┘
+  개발                      debug 빌드에만 (8.8)
+┌───────────────────────┐
+│ 📶 무선 디버깅     (●) │  스위치
+│    192.168.1.204       │
+└───────────────────────┘
+┌───────────────────────┐
+│ </> 개발자 옵션          │
+└───────────────────────┘
 ```
-등록 상태 카드 아래에 **진동 기준 카드**가 있다(8.7).
+- 기록이 없으면 종 아이콘과 "아직 받은 알림이 없어요"를 보여 준다.
+- 1분 안이면 시간을 "방금"으로 표시한다.
+- 아이콘은 `res/drawable/ic_*.xml`(Material 아이콘 벡터)이다. 아이콘 라이브러리를 쓰지 않는다.
 
 ### 8.7 진동 기준 시간
 
@@ -329,6 +358,22 @@ com.yunseong.claudewatch
 - 기준에 못 미쳐도 **알림과 기록은 남긴다.** 진동만 생략한다.
 - 기준값은 화면의 진동 기준 카드를 탭할 때마다 `0초(모두) → 10초 → 30초 → 1분 → 2분 → 5분 → 0초` 순서로 바뀐다. 기본값은 0초다.
 - SharedPreferences `settings`의 `minSeconds`에 저장한다. 코드: `settings/VibrationSettings.kt`
+
+### 8.8 무선 디버깅 토글 (debug 빌드 전용)
+
+워치를 다시 설치하거나 디버깅할 때 쓰는 개발용 기능이다.
+
+| 항목 | 내용 |
+|---|---|
+| 동작 | 스위치를 켜면 `Settings.Global.adb_wifi_enabled = 1` 로 바꾸고, Wi-Fi 네트워크를 요청해 워치가 Wi-Fi를 유지하게 한다. 끄면 둘 다 되돌린다 |
+| Wi-Fi 유지 | 갤럭시 워치는 폰과 블루투스로 연결돼 있으면 Wi-Fi를 끈다. 앱 화면이 보이는 동안만(`onStart`~`onStop`) Wi-Fi를 요청한다 |
+| 권한 | `WRITE_SECURE_SETTINGS`. 일반 앱은 받을 수 없어 `src/debug/AndroidManifest.xml`에만 선언하고 adb로 한 번 허용한다: `adb shell pm grant com.yunseong.claudewatch android.permission.WRITE_SECURE_SETTINGS` |
+| release 빌드 | 권한이 매니페스트에 없고, 화면에도 나오지 않는다(`BuildConfig.DEBUG`) |
+| 재연결 | 한 번 페어링한 맥의 adb는 mDNS로 워치를 찾아 자동으로 다시 연결한다(실측 약 6초). 이때 기기 이름 끝에 ` (2)`가 붙을 수 있다 |
+| 코드 | `dev/WirelessDebugging.kt` |
+
+- 무선 디버깅 설정 화면을 바로 여는 인텐트는 워치에 없다. 대신 **개발자 옵션** 버튼으로 개발자 옵션 화면을 연다.
+- 앱을 지우고 다시 설치하면 권한을 다시 허용해야 한다.
 
 ---
 
@@ -431,6 +476,7 @@ echo '{"hook_event_name":"Notification","session_id":"test0000","cwd":"/tmp/demo
 | 맥이 오프라인 | curl이 실패하고 `notify.log`에 기록. 재시도 없음 |
 | Worker 오류 | 응답 코드를 `notify.log`에 기록 |
 | 워치 토큰 만료 | FCM이 UNREGISTERED를 돌려주면 Worker가 토큰을 삭제. 워치는 `onNewToken`이나 앱을 열 때 다시 등록 |
+| 워치 등록 실패 (오프라인) | `RegisterRetryWorker`가 네트워크가 연결되면 다시 시도 (8.5) |
 | 워치가 꺼져 있음 | FCM이 TTL 10분 동안 보관했다가 전달. 그 뒤에는 버림 |
 | 워치 앱 강제 종료 | 앱을 다시 열기 전까지 FCM 메시지를 받지 못함(안드로이드 정책) |
 | 방해 금지 / 취침 모드 | 진동은 울린다(usage=ALARM). 알림 팝업은 워치 설정에 따라 안 뜰 수 있지만 알림 목록과 기록에는 남음 |
