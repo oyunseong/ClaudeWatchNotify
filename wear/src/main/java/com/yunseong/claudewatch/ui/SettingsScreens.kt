@@ -75,7 +75,7 @@ fun SettingsScreen(
                 modifier = itemModifier(spec), transformation = surface(spec), colors = tonal,
                 icon = { ButtonIcon(R.drawable.ic_vibration) },
                 secondaryLabel = {
-                    Text(if (settings.minSeconds == 0L) "모든 작업 · 탭해서 분 단위로" else "${formatElapsed(settings.minSeconds)} 이상 · 탭해서 변경", maxLines = 2)
+                    Text(if (settings.minSeconds == 0L) "모든 작업" else "${formatElapsed(settings.minSeconds)} 이상")
                 },
                 label = { Text("진동 기준") },
             )
@@ -88,7 +88,7 @@ fun SettingsScreen(
                     onClick = onCycleStrength,
                     modifier = itemModifier(spec), transformation = surface(spec), colors = tonal,
                     icon = { ButtonIcon(R.drawable.ic_tune) },
-                    secondaryLabel = { Text("${settings.strength.label} · 탭해서 바꾸고 느껴 보기", maxLines = 2) },
+                    secondaryLabel = { Text(settings.strength.label) },
                     label = { Text("세기") },
                 )
             }
@@ -180,7 +180,7 @@ fun SettingsScreen(
                     onClick = onCycleRemindInterval,
                     modifier = itemModifier(spec), transformation = surface(spec),
                     colors = ButtonDefaults.childButtonColors(),
-                    secondaryLabel = { Text("${settings.remindIntervalMinutes}분 · 탭해서 변경") },
+                    secondaryLabel = { Text("${settings.remindIntervalMinutes}분") },
                     label = { Text("간격") },
                 )
             }
