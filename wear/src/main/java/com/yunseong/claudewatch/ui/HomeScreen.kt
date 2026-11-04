@@ -1,8 +1,5 @@
 package com.yunseong.claudewatch.ui
 
-import android.text.format.DateUtils
-import androidx.annotation.DrawableRes
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,17 +8,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnItemScope
 import androidx.wear.compose.foundation.lazy.items
-import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
-import androidx.wear.compose.material3.AppScaffold
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.CardDefaults
@@ -29,79 +28,91 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.ListSubHeader
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.ScreenScaffold
-import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.SwitchButton
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.TitleCard
 import androidx.wear.compose.material3.lazy.TransformationSpec
-import androidx.wear.compose.material3.lazy.rememberTransformationSpec
-import androidx.wear.compose.material3.lazy.transformedHeight
 import com.yunseong.claudewatch.R
 import com.yunseong.claudewatch.data.NotificationRecord
 import com.yunseong.claudewatch.dev.WirelessDebugging
 import com.yunseong.claudewatch.notify.ClaudeEvent
 import com.yunseong.claudewatch.notify.formatElapsed
 import com.yunseong.claudewatch.register.TokenRegistrar
+import com.yunseong.claudewatch.settings.Settings
+import com.yunseong.claudewatch.settings.VibrationPolicy
+import kotlinx.coroutines.delay
+import java.time.LocalTime
 
 @Composable
 fun HomeScreen(
     records: List<NotificationRecord>,
     registration: TokenRegistrar.Status,
-    minSeconds: Long,
+    settings: Settings,
     onReRegister: () -> Unit,
-    onCycleMinSeconds: () -> Unit,
+    onCycleThreshold: () -> Unit,
+    onOpenThresholdPicker: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenRecord: (Long) -> Unit,
+    onClearRecords: () -> Unit,
     /** null이면 숨긴다 (release 빌드) */
     wirelessDebugging: WirelessDebugging.State? = null,
     onToggleWirelessDebugging: () -> Unit = {},
     onOpenDeveloperOptions: () -> Unit = {},
 ) {
-    ClaudeWatchTheme {
-        AppScaffold {
-            val listState = rememberTransformingLazyColumnState()
-            val spec = rememberTransformationSpec()
-            ScreenScaffold(scrollState = listState) { contentPadding ->
-                TransformingLazyColumn(
-                    state = listState,
-                    contentPadding = contentPadding,
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    item { AppHeader() }
-                    item { ConnectionButton(registration, onReRegister, spec) }
-                    item { ThresholdButton(minSeconds, onCycleMinSeconds, spec) }
+    ListScreen { spec ->
+        item { AppHeader() }
+        item { ConnectionButton(registration, onReRegister, spec) }
+        item { ThresholdButton(settings.minSeconds, onCycleThreshold, onOpenThresholdPicker, spec) }
+        item {
+            Button(
+                onClick = onOpenSettings,
+                modifier = itemModifier(spec),
+                transformation = surface(spec),
+                colors = ButtonDefaults.filledTonalButtonColors(iconColor = MaterialTheme.colorScheme.primary),
+                icon = { ButtonIcon(R.drawable.ic_tune) },
+                secondaryLabel = { Text(settingsSummary(settings), maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                label = { Text("진동 설정") },
+            )
+        }
 
-                    item {
-                        ListSubHeader(modifier = Modifier.transformedHeight(this, spec)) {
-                            Text(if (records.isEmpty()) "최근 알림" else "최근 알림 ${records.size}")
-                        }
-                    }
-                    if (records.isEmpty()) {
-                        item { EmptyState() }
-                    } else {
-                        items(records, key = { it.id }) { RecordCard(it, spec) }
-                    }
+        item {
+            ListSubHeader(modifier = itemModifier(spec)) {
+                Text(if (records.isEmpty()) "최근 알림" else "최근 알림 ${records.size}")
+            }
+        }
+        if (records.isEmpty()) {
+            item { EmptyState() }
+        } else {
+            items(records, key = { it.id }) { RecordCard(it, it.project in settings.mutedProjects, spec) { onOpenRecord(it.id) } }
+            item { ClearButton(onClearRecords, spec) }
+        }
 
-                    if (wirelessDebugging != null) {
-                        item {
-                            ListSubHeader(modifier = Modifier.transformedHeight(this, spec)) { Text("개발") }
-                        }
-                        item { WirelessDebuggingSwitch(wirelessDebugging, onToggleWirelessDebugging, spec) }
-                        item {
-                            Button(
-                                onClick = onOpenDeveloperOptions,
-                                modifier = Modifier.fillMaxWidth().transformedHeight(this, spec),
-                                transformation = SurfaceTransformation(spec),
-                                colors = ButtonDefaults.filledTonalButtonColors(),
-                                icon = { ButtonIcon(R.drawable.ic_code) },
-                                label = { Text("개발자 옵션") },
-                            )
-                        }
-                    }
-                }
+        if (wirelessDebugging != null) {
+            item { ListSubHeader(modifier = itemModifier(spec)) { Text("개발") } }
+            item { WirelessDebuggingSwitch(wirelessDebugging, onToggleWirelessDebugging, spec) }
+            item {
+                Button(
+                    onClick = onOpenDeveloperOptions,
+                    modifier = itemModifier(spec),
+                    transformation = surface(spec),
+                    colors = ButtonDefaults.filledTonalButtonColors(),
+                    icon = { ButtonIcon(R.drawable.ic_code) },
+                    label = { Text("개발자 옵션") },
+                )
             }
         }
     }
 }
+
+/** 홈의 진동 설정 버튼 아래 한 줄 요약 */
+private fun settingsSummary(s: Settings): String = buildList {
+    add(s.strength.label)
+    if (VibrationPolicy.isQuiet(s, LocalTime.now().let { it.hour * 60 + it.minute })) add("조용한 시간 중")
+    else if (s.quietEnabled) add("조용한 시간 ${minuteOfDayLabel(s.quietStartMinute)}~")
+    if (s.remindEnabled) add("다시 알림 ${s.remindIntervalMinutes}분")
+    if (!s.doneEnabled) add("완료 끔")
+    if (!s.attentionEnabled) add("대기 끔")
+}.joinToString(" · ")
 
 @Composable
 private fun AppHeader() {
@@ -131,14 +142,14 @@ private fun TransformingLazyColumnItemScope.ConnectionButton(
         status.inProgress -> "연결 중…" to "워커에 등록하는 중"
         status.isRegistered -> "알림 수신 중" to buildString {
             append("…").append(status.registeredToken.orEmpty().takeLast(4))
-            if (status.registeredAt > 0) append(" · ").append(relative(status.registeredAt))
+            if (status.registeredAt > 0) append(" · ").append(relativeTime(status.registeredAt))
         }
         else -> "연결 안 됨" to (status.lastError ?: "탭해서 다시 연결")
     }
     Button(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().transformedHeight(this, spec),
-        transformation = SurfaceTransformation(spec),
+        modifier = itemModifier(spec),
+        transformation = surface(spec),
         colors = if (ok) {
             ButtonDefaults.filledTonalButtonColors(iconColor = scheme.primary)
         } else {
@@ -155,16 +166,20 @@ private fun TransformingLazyColumnItemScope.ConnectionButton(
     )
 }
 
+/** 탭: 0/5/10/30초/1분 순환, 길게: 1분 단위로 직접 (docs/DESIGN.md 8.7) */
 @Composable
 private fun TransformingLazyColumnItemScope.ThresholdButton(
     minSeconds: Long,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
     spec: TransformationSpec,
 ) {
     Button(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().transformedHeight(this, spec),
-        transformation = SurfaceTransformation(spec),
+        onLongClick = onLongClick,
+        onLongClickLabel = "분 단위로 설정",
+        modifier = itemModifier(spec),
+        transformation = surface(spec),
         colors = ButtonDefaults.filledTonalButtonColors(iconColor = MaterialTheme.colorScheme.primary),
         icon = { ButtonIcon(R.drawable.ic_vibration) },
         secondaryLabel = {
@@ -175,16 +190,21 @@ private fun TransformingLazyColumnItemScope.ThresholdButton(
 }
 
 @Composable
-private fun TransformingLazyColumnItemScope.RecordCard(record: NotificationRecord, spec: TransformationSpec) {
+private fun TransformingLazyColumnItemScope.RecordCard(
+    record: NotificationRecord,
+    muted: Boolean,
+    spec: TransformationSpec,
+    onClick: () -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
     val attention = record.event == ClaudeEvent.Type.ATTENTION.wire
     val accent = if (attention) scheme.tertiary else scheme.primary
     val message = record.message.ifBlank { if (attention) "입력을 기다리는 중" else "작업 완료" }
 
     TitleCard(
-        onClick = {},
-        modifier = Modifier.fillMaxWidth().transformedHeight(this, spec),
-        transformation = SurfaceTransformation(spec),
+        onClick = onClick,
+        modifier = itemModifier(spec),
+        transformation = surface(spec),
         colors = if (attention) {
             CardDefaults.cardColors(
                 containerColor = scheme.tertiaryContainer,
@@ -204,10 +224,19 @@ private fun TransformingLazyColumnItemScope.RecordCard(record: NotificationRecor
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(6.dp))
-                Text(record.project, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(record.project, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                if (muted) {
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        painter = painterResource(R.drawable.ic_volume_off),
+                        contentDescription = "진동 끈 프로젝트",
+                        tint = scheme.outline,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
             }
         },
-        time = { Text(relative(record.receivedAt)) },
+        time = { Text(relativeTime(record.receivedAt)) },
     ) {
         Column {
             Text(message, maxLines = 3, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
@@ -221,6 +250,38 @@ private fun TransformingLazyColumnItemScope.RecordCard(record: NotificationRecor
             }
         }
     }
+}
+
+/** 두 번 탭해야 지운다. 3초 안에 다시 누르지 않으면 원래대로 */
+@Composable
+private fun TransformingLazyColumnItemScope.ClearButton(onClear: () -> Unit, spec: TransformationSpec) {
+    var armed by remember { mutableStateOf(false) }
+    LaunchedEffect(armed) {
+        if (armed) {
+            delay(3_000)
+            armed = false
+        }
+    }
+    val scheme = MaterialTheme.colorScheme
+    Button(
+        onClick = {
+            if (armed) {
+                onClear()
+                armed = false
+            } else {
+                armed = true
+            }
+        },
+        modifier = itemModifier(spec),
+        transformation = surface(spec),
+        colors = if (armed) {
+            ButtonDefaults.buttonColors(containerColor = scheme.errorContainer, contentColor = scheme.onErrorContainer, iconColor = scheme.error)
+        } else {
+            ButtonDefaults.childButtonColors(contentColor = scheme.onSurfaceVariant, iconColor = scheme.onSurfaceVariant)
+        },
+        icon = { ButtonIcon(R.drawable.ic_delete) },
+        label = { Text(if (armed) "한 번 더 누르면 삭제" else "기록 지우기") },
+    )
 }
 
 @Composable
@@ -268,25 +329,10 @@ private fun TransformingLazyColumnItemScope.WirelessDebuggingSwitch(
         checked = state.adbEnabled,
         onCheckedChange = { onToggle() },
         enabled = state.hasPermission,
-        modifier = Modifier.fillMaxWidth().transformedHeight(this, spec),
-        transformation = SurfaceTransformation(spec),
+        modifier = itemModifier(spec),
+        transformation = surface(spec),
         icon = { ButtonIcon(R.drawable.ic_wifi) },
         secondaryLabel = { Text(detail, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         label = { Text("무선 디버깅") },
     )
-}
-
-@Composable
-private fun ButtonIcon(@DrawableRes id: Int) {
-    Icon(
-        painter = painterResource(id),
-        contentDescription = null,
-        modifier = Modifier.size(ButtonDefaults.IconSize),
-    )
-}
-
-private fun relative(epochMs: Long): String {
-    val now = System.currentTimeMillis()
-    if (now - epochMs < DateUtils.MINUTE_IN_MILLIS) return "방금"
-    return DateUtils.getRelativeTimeSpanString(epochMs, now, DateUtils.MINUTE_IN_MILLIS).toString()
 }

@@ -5,4 +5,5 @@
     <string name="channel_done_desc">Claude 작업이 끝났을 때 짧게 두 번 진동</string>
     <string name="channel_attention_name">입력 대기</string>
     <string name="channel_attention_desc">권한 승인이나 입력을 기다릴 때 길게 한 번 진동</string>
+    <string name="tile_label">Claude 상태</string>
 </resources>

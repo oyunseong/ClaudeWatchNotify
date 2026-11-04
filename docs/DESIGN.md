@@ -17,6 +17,8 @@
 - 맥 훅 스크립트 (bash + jq + curl)
 - Cloudflare Worker 중계 서버 (TypeScript)
 - Wear OS 단독 앱: FCM 수신, 이벤트별 진동(방해 금지 중에도), 알림 표시, 최근 기록, 토큰 등록 상태 화면
+- 진동 사용자 설정: 세기·패턴·이벤트별 켜기, 기준 시간(분 단위 직접 설정), 조용한 시간, 입력 대기 반복 알림, 프로젝트 음소거 (8.9~8.11)
+- 워치 타일: 마지막 알림과 오늘 받은 수 (8.12)
 
 **범위 밖 (2차 이후)**: 13절 참고
 
@@ -231,7 +233,7 @@ MIN_SECONDS=0   # 진동 기준은 워치 앱에서 정한다 (8.7). 0이 아니
 - PhoneMonitor와 같은 컨벤션: 버전 카탈로그, AGP 9.3(내장 Kotlin), Kotlin 2.4, Java 17
 - minSdk 30 (Wear OS 3, 갤럭시 워치4 이상), compileSdk 37, targetSdk 36
 - UI: Compose for Wear OS Material3 (`androidx.wear.compose:compose-material3`)
-- 의존성: Firebase Messaging(BOM), Room(KSP), WorkManager, kotlinx-coroutines-play-services, lifecycle, fragment(1.9.1 고정: play-services가 끌어오는 1.1.0은 release lint를 막음)
+- 의존성: Firebase Messaging(BOM), Room(KSP), WorkManager, Wear Compose Navigation, Wear Tiles + protolayout, concurrent-futures, kotlinx-coroutines-play-services, lifecycle, fragment(1.9.1 고정: play-services가 끌어오는 1.1.0은 release lint를 막음)
 - 단독 앱: `com.google.android.wearable.standalone = true`. 폰 앱 없음
 - `BuildConfig.WORKER_URL`, `BuildConfig.REGISTER_SECRET`은 `local.properties`의 `claudewatch.workerUrl`, `claudewatch.registerSecret`에서 읽는다
 - `wear/google-services.json`이 있을 때만 google-services 플러그인을 적용한다. 없으면 빌드는 되지만 FCM이 동작하지 않는다
@@ -245,13 +247,15 @@ com.yunseong.claudewatch
 │  ├─ NotificationRecord.kt     Room Entity
 │  ├─ RecordDao.kt
 │  ├─ AppDatabase.kt
-│  └─ RecordRepository.kt       저장 + 보관 정책 적용
+│  ├─ RecordRepository.kt       저장 + 보관 정책 적용
+│  └─ DailyStats.kt             오늘 받은 수 (타일용, 8.12)
 ├─ settings/
-│  └─ VibrationSettings.kt      진동 기준 시간 (8.7)
+│  └─ VibrationSettings.kt      Settings(설정 값), VibrationPolicy(진동 판단 순수 함수), 저장
 ├─ notify/
 │  ├─ ClaudeEvent.kt            FCM data → 모델 변환
 │  ├─ Channels.kt               조용한 알림 채널, 이전 채널 정리
-│  ├─ Haptics.kt                이벤트별 진동 패턴 재생 (usage=ALARM)
+│  ├─ Haptics.kt                Strength, VibrationPattern 프리셋, 진동 재생 (usage=ALARM)
+│  ├─ Reminders.kt              입력 대기 반복 알림 (WorkManager), 알림 지움 수신기 (8.10)
 │  ├─ NotificationPoster.kt     알림 생성, 그룹 요약
 │  └─ ClaudeMessagingService.kt FirebaseMessagingService
 ├─ register/
@@ -259,10 +263,15 @@ com.yunseong.claudewatch
 │  └─ RegisterRetryWorker.kt    등록 실패 시 네트워크 연결되면 재시도
 ├─ dev/
 │  └─ WirelessDebugging.kt      무선 디버깅 토글 (debug 전용, 8.8)
+├─ tile/
+│  └─ StatusTileService.kt      워치 타일 (8.12)
 └─ ui/
-   ├─ MainActivity.kt
-   ├─ HomeViewModel.kt
-   ├─ HomeScreen.kt
+   ├─ MainActivity.kt           화면 이동 (SwipeDismissableNavHost)
+   ├─ HomeViewModel.kt          모든 화면이 함께 쓰는 ViewModel
+   ├─ HomeScreen.kt             홈
+   ├─ SettingsScreens.kt        진동 설정, 패턴 고르기, 분 선택, 조용한 시간 시각
+   ├─ RecordDetailScreen.kt     기록 상세
+   ├─ Components.kt             목록 화면 틀, 공통 아이콘, 시간 표기
    └─ Theme.kt                  색 팔레트
 ```
 
@@ -272,12 +281,12 @@ com.yunseong.claudewatch
 
 **알림은 조용히 띄우고, 진동은 앱이 `Vibrator`로 직접 울린다.**
 
-| 이벤트 | 채널 ID (소리·진동 없음) | 진동 패턴(ms) |
+| 이벤트 | 채널 ID (소리·진동 없음) | 기본 진동 패턴 |
 |---|---|---|
-| Stop | `claude_done_silent` | `0, 150, 100, 150` (짧게 두 번) |
-| Notification | `claude_attention_silent` | `0, 600` (길게 한 번) |
+| Stop | `claude_done_silent` | 짧게 두 번 (사용자가 바꿀 수 있음, 8.9) |
+| Notification | `claude_attention_silent` | 길게 한 번 (사용자가 바꿀 수 있음, 8.9) |
 
-- 진동 usage는 **ALARM**이다. 방해 금지와 무음 모드에서도 울리고, 백그라운드 앱에서도 허용되는 usage이기 때문이다. 대가로 **취침 모드에서도 울린다.**
+- 진동 usage는 **ALARM**이다. 방해 금지와 무음 모드에서도 울리고, 백그라운드 앱에서도 허용되는 usage이기 때문이다. 대가로 **취침 모드에서도 울린다.** 그래서 앱 자체의 "조용한 시간"을 둔다(8.11).
 - 사용자는 워치의 방해 금지를 **항상 켜 둔다.** 그래서 방해 금지를 따르는 방식으로는 진동을 받을 수 없다.
 
 **채널 진동을 쓰지 않는 이유** (갤럭시 워치7 SM-R930, Wear OS API 36에서 확인)
@@ -308,56 +317,65 @@ com.yunseong.claudewatch
 - 상태(`registeredToken`, `registeredAt`, `lastError`)는 SharedPreferences `registration`에 두고, `StateFlow`로 화면에 보여 준다.
 - HTTP는 `HttpURLConnection`, JSON은 `org.json`을 쓴다.
 
-### 8.6 화면 (`MainActivity` 하나)
+### 8.6 화면
 
-Wear Compose Material3 기반. `TransformingLazyColumn`에 `SurfaceTransformation`을 적용해 화면 가장자리에서 항목이 자연스럽게 줄어든다. 색은 `ui/Theme.kt`의 다크 팔레트(코랄 = 완료, 앰버 = 입력 대기, 배경 순수 검정)를 쓴다.
+Wear Compose Material3 기반. 화면 이동은 `SwipeDismissableNavHost`(오른쪽으로 밀면 뒤로). 목록 화면은 `TransformingLazyColumn` + `SurfaceTransformation`으로 가장자리에서 자연스럽게 줄어든다. 색은 `ui/Theme.kt`의 다크 팔레트(코랄 = 완료, 앰버 = 입력 대기, 배경 순수 검정)를 쓴다.
 
 ```
-        6:51                 TimeText (AppScaffold 기본)
-     ✦ Claude                헤더
+home ─┬─ 진동 기준 (탭: 순환 / 길게: threshold)
+      ├─ 진동 설정 → settings ─┬─ 진동 기준 → threshold (분 선택)
+      │                        ├─ 완료 패턴 / 입력 대기 패턴 → pattern/{done|attention}
+      │                        └─ 조용한 시간 시작·끝 → quiet/{start|end} (TimePicker)
+      └─ 기록 카드 → record/{id}
+```
+
+**홈**
+```
+        6:51                 TimeText
+     ✦ Claude
 ┌───────────────────────┐
-│ ☁✓ 알림 수신 중          │  연결 버튼: 등록 상태, 토큰 끝 4자리, 등록 시각
-│    …hBTM · 방금         │  탭하면 다시 등록. 실패하면 빨간 배경 + 오류 문구
+│ ☁✓ 알림 수신 중          │  연결 버튼: 탭하면 다시 등록. 실패하면 빨간 배경 + 오류 문구
+│    …hBTM · 방금         │
 └───────────────────────┘
 ┌───────────────────────┐
-│ 📳 진동 기준             │  탭할 때마다 기준 변경 (8.7)
+│ 📳 진동 기준             │  탭: 0/5/10/30초/1분 순환, 길게: 분 선택 화면 (8.7)
 │    모든 작업             │
 └───────────────────────┘
-  최근 알림 4                소제목 (기록 개수)
 ┌───────────────────────┐
-│ ⏳ keystore      1분 전 │  입력 대기: 앰버 카드
+│ ⚙ 진동 설정             │  설정 요약: 세기 · 조용한 시간 · 다시 알림 · 꺼진 이벤트
+│    강하게 · 조용한 시간 중 │
+└───────────────────────┘
+  최근 알림 4
+┌───────────────────────┐
+│ ⏳ keystore      1분 전 │  입력 대기: 앰버 카드. 탭하면 상세 (8.11)
 │ Claude needs your …    │
 └───────────────────────┘
 ┌───────────────────────┐
-│ ✓ PhoneMonitor  1분 전 │  완료: 기본 카드 + "5분 12초 걸림"
-│ 작업 완료               │
-│ 5분 12초 걸림           │
+│ ✓ PhoneMonitor 🔇 방금 │  완료: 기본 카드 + 걸린 시간. 🔇 = 진동 끈 프로젝트
+│ 작업 완료 · 5분 12초 걸림 │
 └───────────────────────┘
+   🗑 기록 지우기             한 번 누르면 "한 번 더 누르면 삭제"(3초), 다시 누르면 삭제
   개발                      debug 빌드에만 (8.8)
-┌───────────────────────┐
-│ 📶 무선 디버깅     (●) │  스위치
-│    192.168.1.204       │
-└───────────────────────┘
-┌───────────────────────┐
-│ </> 개발자 옵션          │
-└───────────────────────┘
 ```
 - 기록이 없으면 종 아이콘과 "아직 받은 알림이 없어요"를 보여 준다.
-- 1분 안이면 시간을 "방금"으로 표시한다.
+- 1분 안이면 시간을 "방금"으로, 경과 시간은 "4분"처럼 0초를 생략해 표시한다.
 - 아이콘은 `res/drawable/ic_*.xml`(Material 아이콘 벡터)이다. 아이콘 라이브러리를 쓰지 않는다.
 
 ### 8.7 진동 기준 시간
 
 맥은 경과 시간(`elapsed`)과 함께 항상 보내고, **진동할지는 워치가 정한다.**
 
-| 이벤트 | 진동 조건 |
+| 이벤트 | 진동 조건 (8.9~8.11의 조건과 함께) |
 |---|---|
 | Stop (작업 완료) | `elapsed >= 기준` 이거나 `elapsed`를 모를 때 |
-| Notification (입력 대기) | 항상 |
+| Notification (입력 대기) | 기준과 무관 |
 
 - 기준에 못 미쳐도 **알림과 기록은 남긴다.** 진동만 생략한다.
-- 기준값은 화면의 진동 기준 카드를 탭할 때마다 `0초(모두) → 10초 → 30초 → 1분 → 2분 → 5분 → 0초` 순서로 바뀐다. 기본값은 0초다.
-- SharedPreferences `settings`의 `minSeconds`에 저장한다. 코드: `settings/VibrationSettings.kt`
+- **탭**: `0초(모두) → 5초 → 10초 → 30초 → 1분 → 0초` 순환. 직접 정한 값에서 탭하면 다음 큰 프리셋, 없으면 0초로.
+- **길게 누르기**(또는 설정 화면의 "진동 기준"): 분 선택 화면. 1~60분, `−`/`+` 버튼이나 크라운·베젤로 조절, "저장".
+  - 크라운 한 칸이 약 136px(SM-R930 실측)이라, 40px 넘게 돌면 1분 바꾸고 누적값을 버린다. 한 칸 = 1분.
+  - 한 칸마다 `SegmentTick` 햅틱을 준다.
+- 저장: SharedPreferences `settings`의 `minSeconds`(초).
 
 ### 8.8 무선 디버깅 토글 (debug 빌드 전용)
 
@@ -374,6 +392,74 @@ Wear Compose Material3 기반. `TransformingLazyColumn`에 `SurfaceTransformatio
 
 - 무선 디버깅 설정 화면을 바로 여는 인텐트는 워치에 없다. 대신 **개발자 옵션** 버튼으로 개발자 옵션 화면을 연다.
 - 앱을 지우고 다시 설치하면 권한을 다시 허용해야 한다.
+
+### 8.9 진동 세기와 패턴
+
+워치 모터가 `AMPLITUDE_CONTROL`을 지원해서(SM-R930 확인) 세기와 패턴을 바꿀 수 있다.
+
+| 설정 | 값 | 동작 |
+|---|---|---|
+| 세기 | 약하게 0.4 / 보통 0.7 / 강하게 1.0 (기본) | 패턴의 진폭(0~255)에 곱한다. 탭할 때마다 바뀌고 완료 패턴으로 바로 울려 준다 |
+| 완료 패턴 | 기본 짧게 두 번 | 고르는 즉시 그 패턴으로 울린다 |
+| 입력 대기 패턴 | 기본 길게 한 번 | 〃 |
+| 완료 때 진동 / 입력 대기 때 진동 | 켬 (기본) | 끄면 그 이벤트는 기록만 남긴다 |
+
+패턴 프리셋 (`VibrationPattern`, 이름이 저장값이므로 바꾸지 않는다):
+
+| 이름 | 표시 | 길이 |
+|---|---|---|
+| `DOUBLE` | 짧게 두 번 | 0.4초 |
+| `LONG` | 길게 한 번 | 0.6초 |
+| `LONG_DOUBLE` | 길게 두 번 | 1.0초 |
+| `TRIPLE` | 톡톡톡 | 0.4초 |
+| `HEARTBEAT` | 심장 박동 | 1.1초 |
+| `RAMP` | 점점 강하게 | 0.6초 |
+| `WAVE` | 파도 | 0.6초 |
+
+- 진폭 제어가 없는 모터면 세기 항목을 숨기고, 패턴은 켜고 끄기로만 울린다.
+- 확인: `dumpsys vibrator_manager`의 `played: [...]`에 단계별 길이와 진폭이 찍힌다.
+
+### 8.10 입력 대기 반복 알림
+
+| 항목 | 내용 |
+|---|---|
+| 켜기 | 설정 → 다시 알림 (기본 꺼짐) |
+| 간격 | 1 / 2 (기본) / 5 / 10분, 탭해서 순환 |
+| 횟수 | 최대 3번. 알림 본문에 `· 다시 알림 1/3`이 붙는다 |
+| 취소 | ① 같은 세션의 "작업 완료"가 도착 ② 알림을 밀어서 지움(`deleteIntent` → `DismissReceiver`) ③ 앱을 엶 |
+| 구현 | WorkManager 지연 작업, 세션별 unique work(`remind-<session>`, REPLACE), 태그 `remind` |
+
+- 다시 울릴 때도 8.11의 조건(조용한 시간, 음소거)을 따른다.
+- WorkManager라 Doze 중에는 몇 분 늦을 수 있다. 정확한 시각이 필요한 기능이 아니라서 정확 알람 권한은 쓰지 않는다.
+
+### 8.11 조용한 시간, 프로젝트 음소거, 기록 상세
+
+**조용한 시간** — 이 시간에는 어떤 진동도 울리지 않는다. 알림과 기록은 남는다.
+- 시작·끝을 `TimePicker`(24시간)로 정한다. 기본 23:00~07:00, 꺼짐.
+- 시작 > 끝이면 자정을 넘기는 구간이다. 끝 시각은 포함하지 않는다. 시작 = 끝이면 꺼진 것으로 본다.
+- 켜져 있고 지금이 그 구간이면 홈 요약에 "조용한 시간 중"이 뜬다.
+
+**프로젝트 음소거** — 기록 상세에서 "이 프로젝트 진동"을 끄면 그 프로젝트는 진동 없이 기록만 남긴다. 홈 카드에 🔇 표시, 설정 화면 맨 아래에서 다시 켠다.
+
+**기록 상세** — 상태, 전체 메시지, 걸린 시간, 받은 시각, 보낸 맥, 세션. 메시지가 "작업 완료"면 중복이라 생략한다.
+
+**기록 지우기** — 홈 맨 아래. 두 번 눌러야 지운다(3초 안).
+
+**진동 판단 순서** (`VibrationPolicy.shouldVibrate`, 단위 테스트 있음): 음소거 프로젝트 → 조용한 시간 → 이벤트별 켜기 → (완료면) 기준 시간.
+
+### 8.12 워치 타일
+
+```
+   ✦ Claude
+   작업 완료            ← 마지막 알림 종류 (완료 코랄 / 대기 앰버)
+  other-project        ← 프로젝트
+    1분 전
+ 오늘 완료 3 · 대기 2   ← DailyStats (기록과 별개로 하루 단위 카운트)
+    작업 4분           ← 오늘 완료 작업의 걸린 시간 합
+```
+- 탭하면 앱을 연다. FCM 메시지를 받을 때와 앱을 열 때 `requestUpdate`로 갱신하고, 5분마다 새로 그린다(상대 시간 표기).
+- 클래식 `TileService` + protolayout 기본 요소로 만들었다(Material3 타일 API는 안정성 문제로 쓰지 않음).
+- 추가: 워치 타일 편집에서 "Claude 상태" 추가. 개발 중에는 `adb shell am broadcast -a com.google.android.wearable.app.DEBUG_SURFACE --es operation add-tile --ecn component com.yunseong.claudewatch/.tile.StatusTileService`
 
 ---
 
@@ -490,7 +576,7 @@ echo '{"hook_event_name":"Notification","session_id":"test0000","cwd":"/tmp/demo
 ---
 
 ## 13. 향후 범위 (2차)
-- 타일과 컴플리케이션: 마지막 완료 프로젝트, 실행 중인 세션 수
+- 컴플리케이션: 워치페이스에 마지막 상태 표시 (타일은 8.12에서 구현)
 - 폰 등 여러 기기로 동시 전송 (KV에 토큰 여러 개가 이미 가능한 구조)
 - 워치에서 응답 보내기: 권한 승인이나 거절 (Worker → 맥 역방향 채널 필요)
 
@@ -508,5 +594,10 @@ echo '{"hook_event_name":"Notification","session_id":"test0000","cwd":"/tmp/demo
 | ~~`Vibrator` 대신 알림 채널 진동~~ → **`Vibrator` 직접 사용 (usage=ALARM)** | 방해 금지를 항상 켜 두는 환경이고, 갤럭시 워치는 채널 진동 패턴과 bypassDnd를 무시함 (8.3). 2026-11-04 실기기 테스트 후 변경 |
 | data 메시지만 사용 | 앱이 백그라운드일 때도 `onMessageReceived`가 호출되도록 |
 | 기록 10건, 3일 보관 | 워치에서 최근 상황만 보면 됨 |
+| 진동 세기·패턴을 앱 설정으로 | 모터가 진폭 제어를 지원해 가능. 패턴은 고르는 즉시 울려 줘서 화면 설명 없이도 고를 수 있게 |
+| 진동 기준 프리셋 + 길게 눌러 분 단위 | 자주 쓰는 값은 탭 한 번, 긴 값은 크라운으로. 발견성을 위해 설정 화면에도 같은 진입점 |
+| 앱 자체 조용한 시간 | ALARM 진동이 취침 모드를 무시하므로 대신할 안전장치가 필요 |
+| 반복 알림은 WorkManager | 몇 분 늦어도 되는 기능이라 정확 알람 권한(SCHEDULE_EXACT_ALARM)을 피함 |
+| 타일은 클래식 TileService | protolayout 기본 요소만으로 충분하고 API가 안정적 |
 | 토큰 자동 등록 | FCM 토큰이 바뀌어도 알림이 끊기지 않게 |
 | 비밀값 두 개 분리 | 맥 설정이 새도 기기 등록은 못 하게, 앱이 분석돼도 알림 발송은 못 하게 |

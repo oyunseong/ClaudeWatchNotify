@@ -38,7 +38,7 @@ data class ClaudeEvent(
     }
 }
 
-/** 124 → "2분 4초" */
+/** 124 → "2분 4초", 240 → "4분", 0 → "0초" */
 fun formatElapsed(seconds: Long): String {
     val h = seconds / 3600
     val m = (seconds % 3600) / 60
@@ -46,6 +46,7 @@ fun formatElapsed(seconds: Long): String {
     return buildString {
         if (h > 0) append("${h}시간 ")
         if (m > 0) append("${m}분 ")
-        if (h == 0L) append("${s}초")
+        // "4분 0초" 대신 "4분"
+        if (h == 0L && (s > 0 || m == 0L)) append("${s}초")
     }.trim()
 }

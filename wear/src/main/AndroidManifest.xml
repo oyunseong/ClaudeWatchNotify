@@ -29,6 +29,25 @@
             </intent-filter>
         </activity>
 
+        <!-- 입력 대기 알림을 밀어서 지우면 반복 알림을 멈춘다 -->
+        <receiver
+            android:name=".notify.Reminders$DismissReceiver"
+            android:exported="false" />
+
+        <!-- 워치 타일: 마지막 알림과 오늘 받은 수 -->
+        <service
+            android:name=".tile.StatusTileService"
+            android:exported="true"
+            android:label="@string/tile_label"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@drawable/ic_launcher" />
+        </service>
+
         <service
             android:name=".notify.ClaudeMessagingService"
             android:exported="false">

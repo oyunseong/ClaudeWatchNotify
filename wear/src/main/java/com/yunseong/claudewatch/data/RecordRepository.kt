@@ -11,6 +11,12 @@ class RecordRepository(private val dao: RecordDao) {
 
     fun observe(): Flow<List<NotificationRecord>> = dao.observeLatest(MAX_RECORDS)
 
+    fun observe(id: Long): Flow<NotificationRecord?> = dao.observeById(id)
+
+    suspend fun latest(): NotificationRecord? = dao.latest()
+
+    suspend fun clear() = dao.deleteAll()
+
     suspend fun save(event: ClaudeEvent, now: Long = System.currentTimeMillis()) {
         dao.insert(
             NotificationRecord(

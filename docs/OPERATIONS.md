@@ -74,7 +74,8 @@
 | ⑥ | Worker → FCM | 토큰마다 data 메시지 전송 (priority high, TTL 10분) | 무효 토큰은 KV에서 삭제, 그 밖의 오류는 `errors`에 담김 |
 | ⑦ | FCM → 워치 | 폰 블루투스나 워치 Wi-Fi로 전달 | 워치가 10분 넘게 오프라인이면 버려짐 |
 | ⑧ | 워치 앱 | `onMessageReceived` → Room에 기록(최대 10건, 3일) → 조용한 알림 표시 | |
-| ⑨ | 워치 앱 | 진동 판단: 입력 대기는 항상, 완료는 `elapsed >= 진동 기준`이면 → `Vibrator`(usage=ALARM) | 기준 미만이면 진동만 생략 |
+| ⑨ | 워치 앱 | 진동 판단: 음소거 프로젝트 → 조용한 시간 → 이벤트별 켜기 → (완료면) 기준 시간. 통과하면 고른 패턴·세기로 `Vibrator`(usage=ALARM) | 조건에 걸리면 진동만 생략 |
+| ⑩ | 워치 앱 | 입력 대기면(반복 알림 켜짐) 간격 뒤 다시 진동 예약, 같은 세션 완료가 오면 취소. 오늘 통계 갱신, 타일 갱신 | |
 
 ### 3.2 워치 토큰 등록
 
@@ -89,9 +90,10 @@
 - 옛 토큰은 다음 `/notify` 때 FCM이 무효로 판정하면 Worker가 지운다(`removed` 카운트).
 
 ### 3.3 진동 정책 요약
-- 진동은 **알람 용도**라 방해 금지, 무음, 취침 모드에서도 울린다. 사용자가 방해 금지를 항상 켜 두기 때문이다.
-- 진동 기준은 워치 앱의 "진동 기준" 버튼으로 바꾼다(0초 → 10초 → 30초 → 1분 → 2분 → 5분).
+- 진동은 **알람 용도**라 방해 금지, 무음, 취침 모드에서도 울린다. 사용자가 방해 금지를 항상 켜 두기 때문이다. 밤에 울리지 않게 하려면 앱의 **조용한 시간**을 켠다.
+- 워치 앱에서 바꾸는 것: 진동 기준(탭 0/5/10/30초/1분, 길게 눌러 1~60분), 세기, 이벤트별 패턴, 이벤트별 켜기, 조용한 시간, 입력 대기 반복 알림, 프로젝트 음소거. 자세한 규칙은 DESIGN.md 8.7, 8.9~8.11.
 - 맥의 `MIN_SECONDS`는 0으로 둔다. 0이 아니면 그보다 짧은 작업은 맥에서부터 보내지 않아 워치 기록에도 남지 않는다.
+- 설정은 워치 앱 데이터(`shared_prefs/settings.xml`)에 있다. 앱을 지우면 기본값으로 돌아간다.
 
 ---
 
@@ -121,7 +123,8 @@
    ```
 3. 워치에서 앱을 열고 **알림 허용** → "알림 수신 중"이 뜨는지 확인
 4. 워치 설정 → 애플리케이션 → Claude Watch → **"사용하지 않으면 앱 활동 일시중지" 끄기** (8.5 참고)
-5. `scripts/check.sh --send` → 길게 한 번 진동하면 끝
+5. (선택) 타일 추가: 워치 화면을 길게 눌러 타일 편집 → "Claude 상태" 추가
+6. `scripts/check.sh --send` → 입력 대기 패턴으로 진동하면 끝
 
 ### 4.3 전부 새로 (Firebase·Cloudflare까지)
 DESIGN.md 11절 순서대로 한다: 비밀값 생성 → Firebase 프로젝트·앱·서비스 계정 키 → Cloudflare 로그인·KV 생성(`wrangler.jsonc`에 id 반영)·배포·Secret 3개 → `local.properties`에 URL → 워치 설치(4.2) → 맥 훅(4.1). 서비스 계정 키 파일은 Secret 등록 후 지운다.
@@ -134,7 +137,7 @@ DESIGN.md 11절 순서대로 한다: 비밀값 생성 → Firebase 프로젝트�
 
 | 테스트 | 명령 | 내용 | 기기 |
 |---|---|---|---|
-| 로직 단위 테스트 | `./gradlew :wear:testDebugUnitTest` | FCM data 변환, 진동 기준, 시간 표기, 알림 본문 | 불필요 |
+| 로직 단위 테스트 | `./gradlew :wear:testDebugUnitTest` | FCM data 변환, 진동 판단(기준·조용한 시간·음소거·이벤트별), 프리셋 순환, 패턴 데이터, 시간 표기, 알림 본문 (12개) | 불필요 |
 | 보관 정책 테스트 | `ANDROID_SERIAL=<기기> ./gradlew :wear:connectedDebugAndroidTest` | 10건 유지, 3일 삭제 (메모리 DB) | 워치 |
 | Worker 타입 검사 | `cd worker && npx tsc --noEmit` | | 불필요 |
 | Worker 로컬 실행 | `cd worker && npx wrangler dev` (`.dev.vars` 필요, `.dev.vars.example` 참고) | 로컬 KV로 API 시험 | 불필요 |
@@ -221,7 +224,8 @@ URL만으로는 아무것도 할 수 없다(비밀값 필요). 대량 요청이 
 | 워치 앱 로그 | `adb -s <기기> logcat -s ClaudeMessaging TokenRegistrar WirelessDebugging` |
 | 워치 진동 기록 | `adb -s <기기> shell dumpsys vibrator_manager \| grep claudewatch` (usage, 성공 여부) |
 | 워치 알림 | `adb -s <기기> shell dumpsys notification \| grep claudewatch` |
-| 워치 앱 상태 파일 | `adb -s <기기> shell run-as com.yunseong.claudewatch cat shared_prefs/registration.xml` (`settings.xml`도 같은 방식) |
+| 워치 앱 상태 파일 | `adb -s <기기> shell run-as com.yunseong.claudewatch cat shared_prefs/registration.xml` (`settings.xml` 설정, `stats.xml` 오늘 통계도 같은 방식) |
+| 반복 알림 예약 | `adb -s <기기> shell dumpsys jobscheduler \| grep -A3 claudewatch` |
 
 정기 점검은 필요 없다. 진동이 이상하다고 느낄 때 `scripts/check.sh`부터 돌린다.
 
@@ -244,7 +248,12 @@ URL만으로는 아무것도 할 수 없다(비밀값 필요). 대량 요청이 
 | 응답이 `"sent":0` | 등록된 워치 없음 | 워치 앱을 연다. "연결 안 됨"이면 8.3 |
 | 응답의 `errors`에 코드 | FCM 쪽 문제 | 8.2 |
 | `sent:1`인데 워치 기록에도 없음 | FCM이 워치에 못 전달 | 워치의 블루투스 / Wi-Fi 연결 확인, 앱이 강제 종료됐거나 휴면 상태인지 확인(8.5) |
-| 워치 기록에는 있는데 진동만 없음 | 진동 기준, 워치 진동 세기 0 | 진동 기준 확인, 워치 설정 → 소리와 진동 → 진동 세기 확인. `dumpsys vibrator_manager`에서 `ignored` 사유 확인 |
+| 워치 기록에는 있는데 진동만 없음 | 앱 설정이 막음 | 홈의 "진동 설정" 요약을 본다: "조용한 시간 중", "완료 끔"/"대기 끔". 기록 카드에 🔇가 있으면 프로젝트 음소거(상세에서 다시 켬). 진동 기준도 확인 |
+| ″ | 세기가 약함 | 설정 → 세기를 "강하게"로. 실제 진폭은 `dumpsys vibrator_manager`의 `played: [...]`로 확인 |
+| ″ | 워치 진동 세기 0 | 워치 설정 → 소리와 진동 → 진동 세기 확인. `dumpsys vibrator_manager`에서 `ignored` 사유 확인 |
+| 입력 대기 반복 알림이 안 옴 | 꺼져 있음, 앱을 열었음, 알림을 지웠음, 같은 세션이 완료됨 | 설정 → 다시 알림 확인. 앱을 열면 확인한 것으로 보고 취소한다(의도된 동작). Doze 중에는 몇 분 늦을 수 있음 |
+| 반복 알림이 안 멈춤 | 같은 세션 완료가 안 옴(Claude가 다른 세션으로 진행) | 앱을 한 번 열면 전부 멈춘다 |
+| 밤에 진동이 울림 | ALARM 진동은 취침 모드를 무시 | 설정 → 조용한 시간 켜기 |
 
 ### 8.2 FCM 오류 코드 (`errors[].code`)
 
@@ -292,7 +301,8 @@ URL만으로는 아무것도 할 수 없다(비밀값 필요). 대량 요청이 
 
 ## 9. 알려진 제약
 
-- 진동이 알람 용도라 **취침 모드에서도 울린다.**
+- 진동이 알람 용도라 **취침 모드에서도 울린다.** 앱의 조용한 시간으로 막는다.
+- 반복 알림과 타일 갱신은 WorkManager·시스템 일정에 따르므로 Doze 중에는 몇 분 늦을 수 있다.
 - Stop은 응답(턴)이 끝날 때마다 실행된다. 긴 작업이 여러 턴이면 알림도 여러 번 온다.
 - 같은 세션의 새 알림은 워치 알림 목록에서 이전 것을 대체한다. 기록 화면에는 모두 남는다(최대 10건).
 - 실패한 전송은 재시도하지 않는다. 워치가 10분 넘게 오프라인이면 그 사이 알림은 사라진다.
@@ -312,6 +322,7 @@ URL만으로는 아무것도 할 수 없다(비밀값 필요). 대량 요청이 
 | `worker/src/{index,fcm,auth}.ts`, `worker/wrangler.jsonc` | Worker 코드와 설정 |
 | `wear/src/main/…` | 워치 앱 |
 | `wear/src/debug/AndroidManifest.xml` | debug 빌드 전용 권한 |
+| `wear/src/main/java/.../tile/StatusTileService.kt` | 워치 타일 |
 | `wear/src/test/…`, `wear/src/androidTest/…` | 테스트 |
 | `local.properties` *(git 제외)* | SDK 경로, Worker URL, 비밀값 2개 |
 | `wear/google-services.json` *(git 제외)* | Firebase 앱 설정 |

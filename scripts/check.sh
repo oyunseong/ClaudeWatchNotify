@@ -97,7 +97,7 @@ if [ "${1:-}" = "--send" ] && [ -n "$SECRET" ]; then
   echo "■ 테스트 알림"
   res="$(curl -s -m 15 -X POST "$URL/notify" -H "Authorization: Bearer $SECRET" \
     -d "{\"event\":\"Notification\",\"project\":\"check.sh\",\"session\":\"check000\",\"message\":\"점검 테스트 알림\",\"host\":\"$(hostname -s)\",\"ts\":\"$(date -u +%FT%TZ)\"}")"
-  echo "$res" | grep -q '"sent":[1-9]' && ok "전송: $res (워치가 길게 한 번 울려야 함)" || bad "전송 결과: $res"
+  echo "$res" | grep -q '"sent":[1-9]' && ok "전송: $res (워치가 입력 대기 패턴으로 울려야 함)" || bad "전송 결과: $res"
 fi
 
 echo

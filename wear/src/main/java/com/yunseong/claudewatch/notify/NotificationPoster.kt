@@ -17,7 +17,8 @@ object NotificationPoster {
     private const val EVENT_ID = 1
     private const val SUMMARY_ID = 0
 
-    fun post(context: Context, event: ClaudeEvent) {
+    /** @param reminder 반복 알림이면 (몇 번째, 최대) */
+    fun post(context: Context, event: ClaudeEvent, reminder: Pair<Int, Int>? = null) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
         ) return
@@ -30,17 +31,26 @@ object NotificationPoster {
             Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        // 밀어서 지우면 이 세션의 반복 알림을 멈춘다 (docs/DESIGN.md 8.10)
+        val onDismiss = PendingIntent.getBroadcast(
+            context,
+            event.session.hashCode(),
+            Intent(context, Reminders.DismissReceiver::class.java).putExtra(Reminders.EXTRA_SESSION, event.session),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val text = bodyText(event) + (reminder?.let { (n, max) -> " · 다시 알림 $n/$max" } ?: "")
 
         val notification = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(event.project)
-            .setContentText(bodyText(event))
+            .setContentText(text)
             .setCategory(
                 if (event.type == ClaudeEvent.Type.ATTENTION) NotificationCompat.CATEGORY_REMINDER
                 else NotificationCompat.CATEGORY_STATUS
             )
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(openApp)
+            .setDeleteIntent(onDismiss)
             .setAutoCancel(true)
             .setGroup(GROUP)
             .build()
