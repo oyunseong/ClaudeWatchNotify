@@ -1,5 +1,6 @@
 # ~/.claude/watch-notify/config  (chmod 600)
 WORKER_URL="https://claude-watch-notify.<계정>.workers.dev"
 NOTIFY_SECRET=""
-# Stop 이벤트에서 이 시간(초)보다 짧게 끝난 응답은 알리지 않는다
-MIN_SECONDS=30
+# 진동 기준 시간은 워치 앱에서 설정한다 (docs/DESIGN.md 8.7).
+# 0이 아니면 이 시간(초)보다 짧은 Stop은 맥에서부터 보내지 않는다 (워치 기록에도 안 남음)
+MIN_SECONDS=0

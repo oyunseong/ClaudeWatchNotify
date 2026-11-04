@@ -23,10 +23,13 @@ class MainActivity : ComponentActivity() {
         setContent {
             val records = viewModel.records.collectAsStateWithLifecycle()
             val registration = viewModel.registration.collectAsStateWithLifecycle()
+            val minSeconds = viewModel.minSeconds.collectAsStateWithLifecycle()
             HomeScreen(
                 records = records.value,
                 registration = registration.value,
+                minSeconds = minSeconds.value,
                 onReRegister = viewModel::reRegister,
+                onCycleMinSeconds = viewModel::cycleMinSeconds,
             )
         }
     }

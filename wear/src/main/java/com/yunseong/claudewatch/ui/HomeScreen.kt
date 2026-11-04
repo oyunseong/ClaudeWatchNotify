@@ -25,7 +25,9 @@ import com.yunseong.claudewatch.register.TokenRegistrar
 fun HomeScreen(
     records: List<NotificationRecord>,
     registration: TokenRegistrar.Status,
+    minSeconds: Long,
     onReRegister: () -> Unit,
+    onCycleMinSeconds: () -> Unit,
 ) {
     MaterialTheme {
         AppScaffold {
@@ -34,6 +36,7 @@ fun HomeScreen(
                 TransformingLazyColumn(state = listState, contentPadding = contentPadding) {
                     item { ListHeader { Text("Claude") } }
                     item { RegistrationCard(registration, onReRegister) }
+                    item { ThresholdCard(minSeconds, onCycleMinSeconds) }
                     if (records.isEmpty()) {
                         item {
                             Text(
@@ -74,6 +77,21 @@ private fun RegistrationCard(status: TokenRegistrar.Status, onClick: () -> Unit)
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+@Composable
+private fun ThresholdCard(minSeconds: Long, onClick: () -> Unit) {
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Text(
+            if (minSeconds == 0L) "진동: 모든 작업" else "진동: ${formatElapsed(minSeconds)} 이상",
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Text(
+            "탭해서 기준 변경 · 입력 대기는 항상 진동",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

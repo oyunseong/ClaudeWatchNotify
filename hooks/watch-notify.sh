@@ -38,8 +38,8 @@ case "$event" in
     start="$(cat "$state_file" 2>/dev/null || true)"
     if [[ "$start" =~ ^[0-9]+$ ]]; then
       elapsed=$((now - start))
-      # 짧은 질답에는 울리지 않는다. 시작 시각을 모르면 보낸다
-      [ "$elapsed" -lt "${MIN_SECONDS:-30}" ] && exit 0
+      # 진동 기준은 워치 앱에서 정한다. MIN_SECONDS는 맥에서 아예 안 보낼 때만 쓴다 (기본 0)
+      [ "$elapsed" -lt "${MIN_SECONDS:-0}" ] && exit 0
     fi
     message="작업 완료"
     ;;

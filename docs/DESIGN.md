@@ -10,7 +10,7 @@
 **목표**
 - 자리를 비워도 Claude 작업이 끝난 걸 워치 진동으로 바로 안다.
 - 권한 승인이나 입력을 기다리는 상황은 다른 진동 패턴으로 구분한다.
-- 짧은 질답(30초 미만)에는 울리지 않는다.
+- 짧게 끝난 작업에 울릴지는 워치 앱에서 기준 시간으로 정한다(기본: 모두 울림).
 
 **1차 범위**
 - 맥 훅 스크립트 (bash + jq + curl)
@@ -61,7 +61,7 @@
 
 | 컴포넌트 | 위치 | 책임 | 하지 않는 것 |
 |---|---|---|---|
-| 맥 훅 스크립트 | `hooks/watch-notify.sh` | 훅 입력 파싱, 경과 시간 계산, 짧은 응답 거르기, 워커 호출, 실패 로그 | 재시도, FCM 직접 호출, 비밀 키 보관(NOTIFY_SECRET 제외) |
+| 맥 훅 스크립트 | `hooks/watch-notify.sh` | 훅 입력 파싱, 경과 시간 계산, 워커 호출, 실패 로그 | 재시도, FCM 직접 호출, 비밀 키 보관(NOTIFY_SECRET 제외) |
 | 설치 스크립트 | `hooks/install.sh` | 스크립트 복사, 설정 파일 템플릿 생성, `~/.claude/settings.json`에 훅 등록/해제 | 워커 배포 |
 | Worker | `worker/` | 인증, 페이로드 검증, OAuth 토큰 발급·캐시, FCM 전송, 무효 토큰 삭제 | 메시지 내용 저장, 재시도 |
 | Wear 앱 | `wear/` | 토큰 등록, 메시지 수신, 기록 저장·정리, 알림 표시, 진동 재생, 상태 화면 | 알림 채널로 진동 울리기 (8.3 참고) |
@@ -91,7 +91,7 @@ Claude Code        watch-notify.sh             Worker            FCM        Wear
  │─UserPromptSubmit─▶│ state/<session> = now    │                 │            │
  │   ... 작업 ...      │                          │                 │            │
  │─Stop─────────────▶│ elapsed = now - start    │                 │            │
- │                   │ elapsed < MIN_SECONDS? → 종료              │            │
+ │                   │ (MIN_SECONDS > elapsed면 종료, 기본 0)      │            │
  │                   │── POST /notify (bg) ────▶│ OAuth(캐시)      │            │
  │                   │                          │── send ────────▶│── data ───▶│
  │                   │                          │                 │            │ Room 저장 + 정리
@@ -194,7 +194,7 @@ Stop과 같지만 경과 시간을 확인하지 않고 항상 보낸다. `messag
 ```bash
 WORKER_URL="https://claude-watch-notify.<계정>.workers.dev"
 NOTIFY_SECRET="..."
-MIN_SECONDS=30
+MIN_SECONDS=0   # 진동 기준은 워치 앱에서 정한다 (8.7). 0이 아니면 맥에서부터 거른다
 ```
 
 ### 7.2 `~/.claude/settings.json`에 등록하는 훅
@@ -217,7 +217,8 @@ MIN_SECONDS=30
 - `config`가 없으면 아무것도 하지 않고 `exit 0`. 훅이 Claude 작업을 막으면 안 된다.
 - 어떤 경우든 스크립트는 **항상 exit 0**이다. Stop 훅이 0이 아닌 코드로 끝나면 Claude 동작에 영향을 줄 수 있다.
 - 전송은 `( curl ... ) &`로 백그라운드에서 하고, 훅 자체는 바로 끝낸다. curl 타임아웃은 10초다.
-- 시작 시각 기록이 없으면(설치 전에 시작한 세션 등) 경과 시간을 모르므로 **보낸다**.
+- 기본은 경과 시간과 상관없이 **항상 보낸다**(`MIN_SECONDS=0`). 진동 여부는 워치가 정한다(8.7).
+- 시작 시각 기록이 없으면(설치 전에 시작한 세션 등) `elapsed`를 빈 값으로 보낸다.
 - HTTP 2xx가 아니거나 curl이 실패하면 `notify.log`에 `시각 event project http=코드` 한 줄을 남긴다.
 
 ---
@@ -244,6 +245,8 @@ com.yunseong.claudewatch
 │  ├─ RecordDao.kt
 │  ├─ AppDatabase.kt
 │  └─ RecordRepository.kt       저장 + 보관 정책 적용
+├─ settings/
+│  └─ VibrationSettings.kt      진동 기준 시간 (8.7)
 ├─ notify/
 │  ├─ ClaudeEvent.kt            FCM data → 모델 변환
 │  ├─ Channels.kt               조용한 알림 채널, 이전 채널 정리
@@ -312,6 +315,20 @@ com.yunseong.claudewatch
 │ 권한 승인 대기 │
 └──────────────┘
 ```
+등록 상태 카드 아래에 **진동 기준 카드**가 있다(8.7).
+
+### 8.7 진동 기준 시간
+
+맥은 경과 시간(`elapsed`)과 함께 항상 보내고, **진동할지는 워치가 정한다.**
+
+| 이벤트 | 진동 조건 |
+|---|---|
+| Stop (작업 완료) | `elapsed >= 기준` 이거나 `elapsed`를 모를 때 |
+| Notification (입력 대기) | 항상 |
+
+- 기준에 못 미쳐도 **알림과 기록은 남긴다.** 진동만 생략한다.
+- 기준값은 화면의 진동 기준 카드를 탭할 때마다 `0초(모두) → 10초 → 30초 → 1분 → 2분 → 5분 → 0초` 순서로 바뀐다. 기본값은 0초다.
+- SharedPreferences `settings`의 `minSeconds`에 저장한다. 코드: `settings/VibrationSettings.kt`
 
 ---
 
@@ -417,7 +434,7 @@ echo '{"hook_event_name":"Notification","session_id":"test0000","cwd":"/tmp/demo
 | 워치가 꺼져 있음 | FCM이 TTL 10분 동안 보관했다가 전달. 그 뒤에는 버림 |
 | 워치 앱 강제 종료 | 앱을 다시 열기 전까지 FCM 메시지를 받지 못함(안드로이드 정책) |
 | 방해 금지 / 취침 모드 | 진동은 울린다(usage=ALARM). 알림 팝업은 워치 설정에 따라 안 뜰 수 있지만 알림 목록과 기록에는 남음 |
-| 짧은 응답 | Stop이면서 경과 시간이 `MIN_SECONDS` 미만이면 보내지 않음 |
+| 짧은 응답 | 맥은 보내고, 워치가 기준 시간 미만이면 진동만 생략 (8.7) |
 
 **알려진 제약**
 - Stop 훅은 응답(턴)이 끝날 때마다 실행된다. 긴 작업 하나가 여러 턴으로 나뉘면 알림도 여러 번 온다.
@@ -441,6 +458,7 @@ echo '{"hook_event_name":"Notification","session_id":"test0000","cwd":"/tmp/demo
 | 로컬 토큰 캐시 대신 Cloudflare Worker 중계 | 서비스 계정 키를 맥에 두지 않고, 맥 쪽 의존성을 curl 하나로 줄이기 위해 |
 | 파이썬 없이 bash + jq + curl | 훅이 매번 실행되므로 시작 비용을 줄이고, jq는 이미 설치돼 있음 |
 | 짧은 응답 판정에 UserPromptSubmit 기록 사용 | Stop 훅 입력에 소요 시간이 없음 |
+| 진동 기준을 맥 config에서 워치 앱 설정으로 이동 | 짧은 작업에도 울리게 하고, 기준을 워치에서 바로 바꿀 수 있게. 2026-11-04 변경 |
 | ~~`Vibrator` 대신 알림 채널 진동~~ → **`Vibrator` 직접 사용 (usage=ALARM)** | 방해 금지를 항상 켜 두는 환경이고, 갤럭시 워치는 채널 진동 패턴과 bypassDnd를 무시함 (8.3). 2026-11-04 실기기 테스트 후 변경 |
 | data 메시지만 사용 | 앱이 백그라운드일 때도 `onMessageReceived`가 호출되도록 |
 | 기록 10건, 3일 보관 | 워치에서 최근 상황만 보면 됨 |
