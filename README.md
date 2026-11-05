@@ -79,7 +79,7 @@
 | 중계 | Cloudflare Workers, KV, FCM HTTP v1 |
 | 맥 | Claude Code hooks, bash, jq, curl |
 
-테스트 기기는 갤럭시 워치7(Wear OS 5)입니다.
+테스트 기기는 갤럭시 워치7(Wear OS 6, Android 16)입니다.
 
 ## 직접 써 보려면
 
